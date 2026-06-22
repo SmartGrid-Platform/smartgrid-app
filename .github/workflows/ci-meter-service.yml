@@ -1,0 +1,13 @@
+name: CI — meter-service
+
+on:
+  workflow_call:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      service:      meter-service
+      port:         3003
+      healthz_path: /healthz
+    secrets: inherit

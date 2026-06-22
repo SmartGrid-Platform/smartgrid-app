@@ -1,0 +1,14 @@
+name: CI — ai-assistant-service
+
+on:
+  workflow_call:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      service:      ai-assistant-service
+      port:         4004
+      # ai-assistant uses a different health path
+      healthz_path: /api/assistant/healthz
+    secrets: inherit

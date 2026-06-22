@@ -1,0 +1,234 @@
+name: CI/CD - Build, Push & Deploy to EKS
+
+# GitOps deployment flow:
+#   1. Per-service CI (main.yml) builds, scans, and pushes images to ECR.
+#   2. main.yml updates imageTag in smartgrid-helm values.yaml and commits.
+#   3. ArgoCD detects the commit and syncs the EKS deployment automatically.
+#
+# This workflow handles the infrastructure-adjacent tasks that run alongside
+# that GitOps flow: IaC scanning, frontend upload, and CloudFront origin switch.
+# It does NOT run helm upgrade or kubectl apply directly — that is ArgoCD's job.
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 0. Read Terraform outputs — shared source of truth for all jobs
+  # ─────────────────────────────────────────────────────────────
+  read-tf-outputs:
+    name: Read Terraform Outputs
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_name:       ${{ steps.tf.outputs.cluster_name }}
+      k8s_namespace:      ${{ steps.tf.outputs.k8s_namespace }}
+      ecr_registry_url:   ${{ steps.tf.outputs.ecr_registry_url }}
+      eks_pod_role_arn:   ${{ steps.tf.outputs.eks_pod_role_arn }}
+      secret_name:        ${{ steps.tf.outputs.secret_name }}
+      cloudfront_url:     ${{ steps.tf.outputs.cloudfront_url }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+          terraform_wrapper: false
+
+      - name: Terraform Init (read-only — accesses remote state)
+        working-directory: ./terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
+
+      - name: Export Terraform outputs
+        id: tf
+        working-directory: ./terraform
+        run: |
+          echo "cluster_name=$(terraform output -raw cluster_name)"                          >> "$GITHUB_OUTPUT"
+          echo "k8s_namespace=$(terraform output -raw k8s_namespace)"                        >> "$GITHUB_OUTPUT"
+          echo "ecr_registry_url=$(terraform output -raw ecr_registry_url)"                  >> "$GITHUB_OUTPUT"
+          echo "eks_pod_role_arn=$(terraform output -raw eks_pod_role_arn)"                  >> "$GITHUB_OUTPUT"
+          echo "secret_name=$(terraform output -raw secrets_manager_secret_name)"            >> "$GITHUB_OUTPUT"
+          echo "cloudfront_url=$(terraform output -raw cloudfront_url)"                      >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────
+  # 1. Security Scanning (non-blocking)
+  # ─────────────────────────────────────────────────────────────
+  security-scans:
+    name: Security Scanning (Checkov & Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov IaC Scan
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          framework: terraform
+          output_format: cli
+          soft_fail: true
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+
+  # ─────────────────────────────────────────────────────────────
+  # 2. Build frontend and upload static files to S3
+  # ─────────────────────────────────────────────────────────────
+  upload-frontend:
+    name: Build & Upload Frontend to S3
+    runs-on: ubuntu-latest
+    needs: [read-tf-outputs, security-scans]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Upload to S3
+        run: |
+          FRONTEND_BUCKET=$(aws s3api list-buckets \
+            --query "Buckets[?starts_with(Name, 'smartgrid-') && contains(Name, '-frontend-bucket-')].Name | [0]" \
+            --output text)
+          if [ -z "$FRONTEND_BUCKET" ] || [ "$FRONTEND_BUCKET" = "None" ]; then
+            echo "ERROR: Could not find frontend S3 bucket"
+            exit 1
+          fi
+          echo "Uploading to bucket: $FRONTEND_BUCKET"
+          aws s3 sync frontend/dist/ "s3://$FRONTEND_BUCKET" --delete
+
+  # ─────────────────────────────────────────────────────────────
+  # 3. Switch CloudFront origin to the EKS ALB
+  #
+  # ArgoCD syncs the Helm release (triggered by imageTag commit in
+  # smartgrid-helm). The ALB is provisioned by the AWS Load Balancer
+  # Controller when ArgoCD creates the Ingress. This job polls until
+  # the ALB hostname appears, then updates CloudFront.
+  # ─────────────────────────────────────────────────────────────
+  update-cloudfront:
+    name: Switch CloudFront to EKS ALB
+    runs-on: ubuntu-latest
+    needs: [read-tf-outputs, upload-frontend]
+    env:
+      CLUSTER_NAME:    ${{ needs.read-tf-outputs.outputs.cluster_name }}
+      K8S_NAMESPACE:   ${{ needs.read-tf-outputs.outputs.k8s_namespace }}
+      CLOUDFRONT_URL:  ${{ needs.read-tf-outputs.outputs.cloudfront_url }}
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      - name: Install jq and kubectl
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          KUBECTL_VER=$(curl -sSL https://dl.k8s.io/release/stable.txt)
+          curl -sSLO "https://dl.k8s.io/release/${KUBECTL_VER}/bin/linux/amd64/kubectl"
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Configure kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region "${{ vars.AWS_REGION }}" \
+            --name   "$CLUSTER_NAME"
+
+      - name: Wait for EKS ALB to be provisioned
+        id: get-alb
+        run: |
+          echo "Waiting for LBC to provision the ALB (up to 6 minutes)..."
+          EKS_ALB_DNS=""
+          for i in $(seq 1 36); do
+            EKS_ALB_DNS=$(kubectl get ingress smartgrid-ingress -n "$K8S_NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$EKS_ALB_DNS" ]; then
+              echo "ALB ready: $EKS_ALB_DNS"
+              break
+            fi
+            echo "Attempt $i/36: ALB not ready, retrying in 10s..."
+            sleep 10
+          done
+          if [ -z "$EKS_ALB_DNS" ]; then
+            echo "ERROR: EKS ALB DNS was not assigned within 6 minutes."
+            kubectl describe ingress smartgrid-ingress -n "$K8S_NAMESPACE"
+            exit 1
+          fi
+          echo "eks_alb_dns=$EKS_ALB_DNS" >> "$GITHUB_OUTPUT"
+
+      - name: Update CloudFront origin to point at EKS ALB
+        run: |
+          EKS_ALB_DNS="${{ steps.get-alb.outputs.eks_alb_dns }}"
+
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(to_string(Origins), 'ALB-API')].Id" \
+            --output text)
+          if [ -z "$DIST_ID" ]; then
+            echo "ERROR: Could not find CloudFront distribution with ALB-API origin."
+            exit 1
+          fi
+
+          CONFIG_JSON=$(aws cloudfront get-distribution-config --id "$DIST_ID")
+          ETAG=$(echo "$CONFIG_JSON" | jq -r '.ETag')
+          DIST_CONFIG=$(echo "$CONFIG_JSON" | jq '.DistributionConfig')
+
+          UPDATED_CONFIG=$(echo "$DIST_CONFIG" | jq \
+            --arg alb "$EKS_ALB_DNS" \
+            '.Origins.Items = (.Origins.Items | map(if .Id == "ALB-API" then .DomainName = $alb else . end))')
+
+          echo "$UPDATED_CONFIG" > /tmp/cf-config.json
+          aws cloudfront update-distribution \
+            --id "$DIST_ID" \
+            --if-match "$ETAG" \
+            --distribution-config file:///tmp/cf-config.json
+          echo "CloudFront $DIST_ID updated → $EKS_ALB_DNS"
+
+      - name: Summary
+        run: |
+          echo "### Deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "- EKS ALB DNS: ${{ steps.get-alb.outputs.eks_alb_dns }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- CloudFront URL: https://${{ env.CLOUDFRONT_URL }}"     >> "$GITHUB_STEP_SUMMARY"
+          echo "- API base: https://${{ env.CLOUDFRONT_URL }}/api"       >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Images built by per-service CI (main.yml)." >> "$GITHUB_STEP_SUMMARY"
+          echo "> EKS deployment handled by ArgoCD syncing smartgrid-helm." >> "$GITHUB_STEP_SUMMARY"

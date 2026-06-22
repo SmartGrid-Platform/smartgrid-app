@@ -1,0 +1,157 @@
+version: '3.8'
+
+services:
+  database:
+    image: mysql:8.0
+    container_name: smartgrid-db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: smartgrid_dev
+      MYSQL_USER: smartgrid_user
+      MYSQL_PASSWORD: smartgrid_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: smartgrid-auth-service
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+    depends_on:
+      - database
+
+  consumer-service:
+    build:
+      context: .
+      dockerfile: services/consumer-service/Dockerfile
+    container_name: smartgrid-consumer-service
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+    depends_on:
+      - database
+
+  meter-service:
+    build:
+      context: .
+      dockerfile: services/meter-service/Dockerfile
+    container_name: smartgrid-meter-service
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+    depends_on:
+      - database
+
+  billing-service:
+    build:
+      context: .
+      dockerfile: services/billing-service/Dockerfile
+    container_name: smartgrid-billing-service
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=development
+      - PORT=3004
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+      - LAMBDA_BILL_GENERATOR=mock-bill-generator
+      - LAMBDA_TARIFF_ENGINE=mock-tariff-engine
+      - LAMBDA_UNIT_CALCULATOR=mock-unit-calculator
+      - S3_BUCKET_NAME=smartgrid-dev-billing-bucket
+    depends_on:
+      - database
+
+  alert-service:
+    build:
+      context: .
+      dockerfile: services/alert-service/Dockerfile
+    container_name: smartgrid-alert-service
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=development
+      - PORT=3005
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+    depends_on:
+      - database
+
+  ai-assistant-service:
+    build:
+      context: .
+      dockerfile: services/ai-assistant-service/Dockerfile
+    container_name: smartgrid-ai-assistant-service
+    ports:
+      - "4004:4004"
+    environment:
+      - NODE_ENV=development
+      - PORT=4004
+      - DB_HOST=database
+      - DB_PORT=3306
+      - DB_NAME=smartgrid_dev
+      - DB_USER=smartgrid_user
+      - DB_PASSWORD=smartgrid_password
+      - JWT_SECRET=a2b53cdd87431e5630283c448f72ee7b2c91b5da8d1234c9fb66b3f7efc4901f
+      - BEDROCK_REGION=us-east-1
+      - BEDROCK_MODEL_PRIMARY=amazon.nova-pro-v1:0
+      - BEDROCK_MODEL_FALLBACK=amazon.nova-lite-v1:0
+      - CONSUMER_SERVICE_URL=http://consumer-service:3002
+      - BILLING_SERVICE_URL=http://billing-service:3004
+      - METER_SERVICE_URL=http://meter-service:3003
+    depends_on:
+      - database
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: smartgrid-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - auth-service
+      - consumer-service
+      - meter-service
+      - billing-service
+      - alert-service
+      - ai-assistant-service
+
+volumes:
+  db_data:

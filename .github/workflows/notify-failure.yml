@@ -1,0 +1,26 @@
+name: Reusable — Notify on Failure
+
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: 'Message describing what failed'
+        required: false
+        type: string
+        default: 'CI pipeline failed'
+
+jobs:
+  notify:
+    name: Post failure summary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write failure to step summary
+        run: |
+          echo "## ❌ Pipeline Failure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Context:** ${{ inputs.context }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the failing jobs above for details." >> $GITHUB_STEP_SUMMARY

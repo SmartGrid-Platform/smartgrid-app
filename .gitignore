@@ -1,0 +1,64 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Production build output
+dist/
+build/
+
+# Local configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Generated PDFs and billing statements
+storage/bills/*
+!storage/bills/.gitkeep
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Terraform temporary and state files
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Terraform builds directory
+terraform/builds/
+
+# Local development scratch scripts — not production code
+query-db.js
+query-meters.js
+query-readings.js
+scratch_test_bedrock.js
+test-apis.js
+test-e2e-queries.js
+
+# Log and API response artifact files
+logs.txt
+logs2.txt
+update_log.txt
+console.json
+response.json
+lt_userdata.json
+ssm_payload.json
+
+# Temporary infrastructure exploration files
+AWS_Services_Lambdas_Overview.txt
+terraformflowguide.md
+user_data_fixed.sh
+kms_policy.json
+

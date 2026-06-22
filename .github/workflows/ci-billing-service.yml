@@ -1,0 +1,13 @@
+name: CI — billing-service
+
+on:
+  workflow_call:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      service:      billing-service
+      port:         3004
+      healthz_path: /healthz
+    secrets: inherit

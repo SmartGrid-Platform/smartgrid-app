@@ -1,0 +1,21 @@
+{
+  "name": "smartgrid-shared-db",
+  "version": "1.0.0",
+  "description": "Shared database models and migration utilities for SmartGrid Platform",
+  "main": "models.js",
+  "scripts": {
+    "migrate": "node migrations.js",
+    "bootstrap": "node admin-bootstrap.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.500.0",
+    "@aws-sdk/client-s3": "^3.500.0",
+    "@aws-sdk/client-secrets-manager": "^3.500.0",
+    "@aws-sdk/client-sns": "^3.500.0",
+    "@aws-sdk/s3-request-presigner": "^3.1069.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.9.2",
+    "sequelize": "^6.37.1"
+  }
+}

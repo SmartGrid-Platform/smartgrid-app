@@ -1,0 +1,159 @@
+name: Main CI — Build All Services + Update Helm
+
+# Entry point for the smartgrid-app repo.
+# Triggers on push to dev; all 6 service CI jobs run in parallel.
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+jobs:
+  # ── PER-SERVICE BUILDS (parallel) ─────────────────────────────────
+  ci-auth-service:
+    name: auth-service
+    uses: ./.github/workflows/ci-auth-service.yml
+    secrets: inherit
+
+  ci-consumer-service:
+    name: consumer-service
+    uses: ./.github/workflows/ci-consumer-service.yml
+    secrets: inherit
+
+  ci-meter-service:
+    name: meter-service
+    uses: ./.github/workflows/ci-meter-service.yml
+    secrets: inherit
+
+  ci-billing-service:
+    name: billing-service
+    uses: ./.github/workflows/ci-billing-service.yml
+    secrets: inherit
+
+  ci-alert-service:
+    name: alert-service
+    uses: ./.github/workflows/ci-alert-service.yml
+    secrets: inherit
+
+  ci-ai-assistant-service:
+    name: ai-assistant-service
+    uses: ./.github/workflows/ci-ai-assistant-service.yml
+    secrets: inherit
+
+  # ── NOTIFY IF ANY SERVICE CI FAILS ────────────────────────────────
+  notify-ci-failure:
+    name: Notify Service CI Failure
+    needs:
+      - ci-auth-service
+      - ci-consumer-service
+      - ci-meter-service
+      - ci-billing-service
+      - ci-alert-service
+      - ci-ai-assistant-service
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report CI failure
+        run: |
+          echo "One or more service CI jobs failed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Check individual job logs for build, scan, push, or smoke-test failures." >> "$GITHUB_STEP_SUMMARY"
+          echo "Branch: ${{ github.ref_name }}  SHA: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── SAST / DEPENDENCY SCANNING (non-blocking) ─────────────────────
+  sast:
+    name: SonarCloud SAST
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v3.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN:  ${{ secrets.SONAR_TOKEN }}
+
+  snyk:
+    name: Snyk Dependency Scan
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Snyk test
+        uses: snyk/actions/node@0.4.0
+        with:
+          args: --all-projects --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ── NOTIFY IF SECURITY SCANS SURFACE ISSUES ───────────────────────
+  notify-security:
+    name: Notify Security Issues
+    needs: [sast, snyk]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report security scan issues
+        run: |
+          echo "Security scan(s) reported issues (SonarCloud / Snyk)." >> "$GITHUB_STEP_SUMMARY"
+          echo "These are non-blocking but should be reviewed." >> "$GITHUB_STEP_SUMMARY"
+
+  # ── UPDATE HELM REPO (triggers ArgoCD GitOps deploy) ─────────────
+  # Runs only when ALL six service CI jobs succeed.
+  update-helm-values:
+    name: Update Helm imageTag → triggers ArgoCD
+    runs-on: ubuntu-latest
+    needs:
+      - ci-auth-service
+      - ci-consumer-service
+      - ci-meter-service
+      - ci-billing-service
+      - ci-alert-service
+      - ci-ai-assistant-service
+    if: success()
+
+    steps:
+      - name: Validate ORG_GITHUB variable
+        run: |
+          ORG="${{ vars.ORG_GITHUB }}"
+          if [ -z "$ORG" ]; then
+            echo "ERROR: vars.ORG_GITHUB is not set."
+            echo "Add it under: Settings → Secrets and variables → Actions → Variables"
+            exit 1
+          fi
+          echo "GITHUB_ORG=$ORG" >> "$GITHUB_ENV"
+
+      - name: Compute short SHA
+        id: tag
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout smartgrid-helm repo (dev branch)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.ORG_GITHUB }}/smartgrid-helm
+          ref: dev
+          token: ${{ secrets.GH_PAT }}
+          path: helm-repo
+
+      - name: Update imageTag in values.yaml
+        run: |
+          cd helm-repo
+          TAG="${{ steps.tag.outputs.short_sha }}"
+          sed -i "s/^imageTag: .*/imageTag: \"${TAG}\"/" helm/smartgrid/values.yaml
+          echo "Updated imageTag to: $TAG"
+          grep "imageTag" helm/smartgrid/values.yaml
+
+      - name: Commit and push to helm repo
+        run: |
+          cd helm-repo
+          git config user.email "ci@github.com"
+          git config user.name "SmartGrid CI"
+          git add helm/smartgrid/values.yaml
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "ci: update imageTag to ${{ steps.tag.outputs.short_sha }} [skip ci]"
+          git push origin dev
+          echo "Helm repo updated — ArgoCD will detect and deploy automatically."

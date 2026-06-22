@@ -1,0 +1,13 @@
+name: CI — alert-service
+
+on:
+  workflow_call:
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-template.yml
+    with:
+      service:      alert-service
+      port:         3005
+      healthz_path: /healthz
+    secrets: inherit

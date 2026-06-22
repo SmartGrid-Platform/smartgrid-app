@@ -1,0 +1,129 @@
+name: Reusable — Build, Scan, Push, Smoke-Test
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: 'Service name (e.g. auth-service)'
+        required: true
+        type: string
+      port:
+        description: 'Service HTTP port'
+        required: true
+        type: number
+      healthz_path:
+        description: 'Health endpoint path'
+        required: false
+        type: string
+        default: '/healthz'
+    outputs:
+      image_tag:
+        description: 'Short SHA used as image tag'
+        value: ${{ jobs.build-scan-push.outputs.image_tag }}
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+
+jobs:
+  build-scan-push:
+    name: ${{ inputs.service }} — Build → Scan → Push → Smoke
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.short_sha }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Compute image tag (short SHA)
+        id: tag
+        run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      # ── AWS / ECR ────────────────────────────────────────────────────
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve ECR repo and image name
+        id: image
+        run: |
+          REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          # ECR_REPO_PREFIX must be set as a GitHub Variable (e.g. "smartgrid-default").
+          # It is derived from the cluster name: <cluster-name minus "-cluster" suffix>.
+          # Set it in: Settings → Secrets and variables → Actions → Variables → ECR_REPO_PREFIX
+          REPO_PREFIX="${{ vars.ECR_REPO_PREFIX }}"
+          if [ -z "$REPO_PREFIX" ]; then
+            echo "ERROR: vars.ECR_REPO_PREFIX is not set. Add it under Actions Variables."
+            exit 1
+          fi
+          REPO="${REPO_PREFIX}-${{ inputs.service }}"
+          TAG="${{ steps.tag.outputs.short_sha }}"
+          echo "name=${REGISTRY}/${REPO}:${TAG}"   >> $GITHUB_OUTPUT
+          echo "latest=${REGISTRY}/${REPO}:latest" >> $GITHUB_OUTPUT
+
+      # ── BUILD ────────────────────────────────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ steps.image.outputs.name }} \
+            -t ${{ steps.image.outputs.latest }} \
+            -f services/${{ inputs.service }}/Dockerfile \
+            .
+
+      # ── SECURITY SCAN ────────────────────────────────────────────────
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref:  ${{ steps.image.outputs.name }}
+          format:     table
+          exit-code:  '1'
+          severity:   'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      # ── PUSH ─────────────────────────────────────────────────────────
+      - name: Push image to ECR
+        run: |
+          docker push ${{ steps.image.outputs.name }}
+          docker push ${{ steps.image.outputs.latest }}
+
+      # ── SMOKE TEST ───────────────────────────────────────────────────
+      # Starts the container without a DB connection and verifies /healthz
+      # responds 200. SKIP_SECRETS_MANAGER bypasses AWS SDK calls.
+      - name: Smoke test
+        run: |
+          docker run -d \
+            --name smoke-${{ inputs.service }} \
+            -e PORT=${{ inputs.port }} \
+            -e NODE_ENV=production \
+            -e SKIP_SECRETS_MANAGER=true \
+            -p ${{ inputs.port }}:${{ inputs.port }} \
+            ${{ steps.image.outputs.name }}
+
+          echo "Waiting for ${{ inputs.service }} to respond on ${{ inputs.healthz_path }}..."
+          PASSED=0
+          for i in $(seq 1 20); do
+            if curl -sf "http://localhost:${{ inputs.port }}${{ inputs.healthz_path }}" > /dev/null 2>&1; then
+              echo "  ✓ ${{ inputs.service }} is healthy (attempt $i)"
+              PASSED=1
+              break
+            fi
+            echo "  Attempt $i/20 — not ready yet"
+            sleep 1
+          done
+
+          docker rm -f smoke-${{ inputs.service }} 2>/dev/null || true
+
+          if [ "$PASSED" -eq 0 ]; then
+            echo "Smoke test FAILED for ${{ inputs.service }}"
+            docker logs smoke-${{ inputs.service }} 2>/dev/null || true
+            exit 1
+          fi
