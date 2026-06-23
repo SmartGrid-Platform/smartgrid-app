@@ -18,29 +18,35 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
-// Custom Rate Limiter Middleware
+// Health Check Endpoints — registered before rate limiter so probes are never throttled
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy', service: 'auth-service', timestamp: new Date() });
+});
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ status: 'healthy', service: 'auth-service', timestamp: new Date() });
+});
+app.get('/ready', (req, res) => {
+  res.status(200).json({ status: 'ready', service: 'auth-service', timestamp: new Date() });
+});
+
+// Rate Limiter — applied only to non-health routes
+// Limit is per source IP; in EKS all ALB traffic shares the proxy IP so keep
+// the window large enough that legitimate production traffic is never blocked.
 const rateLimitMap = new Map();
 const rateLimiter = (req, res, next) => {
-  if (
-    req.path === '/health' ||
-    req.path === '/healthz' ||
-    req.path === '/ready'
-  ) {
-    return next();
-  }
   const ip = req.ip;
   const now = Date.now();
-  const limit = 100; // 100 requests
+  const limit = 1000;
   const windowMs = 15 * 60 * 1000; // 15 minutes
-  
+
   if (!rateLimitMap.has(ip)) {
     rateLimitMap.set(ip, []);
   }
-  
+
   const requests = rateLimitMap.get(ip).filter(time => now - time < windowMs);
   requests.push(now);
   rateLimitMap.set(ip, requests);
-  
+
   if (requests.length > limit) {
     return res.status(429).json({ error: 'Too many requests, please try again later.' });
   }
@@ -51,17 +57,6 @@ app.use(rateLimiter);
 
 // Swagger Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-
-// Health Check Endpoints
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'healthy', service: 'auth-service', timestamp: new Date() });
-});
-app.get('/healthz', (req, res) => {
-  res.status(200).json({ status: 'healthy', service: 'auth-service', timestamp: new Date() });
-});
-app.get('/ready', (req, res) => {
-  res.status(200).json({ status: 'ready', service: 'auth-service', timestamp: new Date() });
-});
 
 // Registration Endpoint
 app.post('/api/auth/register', async (req, res) => {
