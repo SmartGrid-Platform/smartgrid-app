@@ -31,9 +31,9 @@ COPY --from=builder /app/services/auth-service ./services/auth-service
 
 WORKDIR /app/services/auth-service
 
-# Upgrade npm (fixes bundled tar CVEs) and patch transitive dep CVEs in app node_modules
-RUN npm install -g npm@latest && \
-    npm install cross-spawn@7.0.5 minimatch@9.0.6 glob@10.5.0 --no-save --no-audit --no-fund
+# Remediate CVEs: patch tar in npm's bundled modules and fix app transitive deps
+RUN cd /usr/local/lib/node_modules/npm && npm install tar@7.5.11 --no-save --no-audit --no-fund && \
+    cd /app/services/auth-service && npm install cross-spawn@7.0.5 minimatch@9.0.7 glob@10.5.0 --no-save --no-audit --no-fund
 
 EXPOSE 3001
 ENV NODE_ENV=production
