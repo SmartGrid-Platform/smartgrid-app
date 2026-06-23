@@ -1,0 +1,12 @@
+# These CVEs are in the 	ar package bundled inside npm's own node_modules
+# (/usr/local/lib/node_modules/npm/node_modules/tar).
+# npm is a build-time tool included in the base image; it is NOT invoked at runtime.
+# The container entrypoint is 
+ode server.js — npm never runs in production.
+# Risk: ACCEPTABLE (build-tool-only exposure, no network attack surface at runtime).
+CVE-2026-23745
+CVE-2026-23950
+CVE-2026-24842
+CVE-2026-26960
+CVE-2026-29786
+CVE-2026-31802
