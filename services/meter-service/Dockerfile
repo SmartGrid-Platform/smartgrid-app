@@ -6,16 +6,16 @@ WORKDIR /app
 COPY shared/database/package*.json ./shared/database/
 WORKDIR /app/shared/database
 RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.overrides=Object.assign(p.overrides||{},{'cross-spawn':'7.0.5','glob':'10.5.0','minimatch':'9.0.7'});fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
-    && npm install --package-lock-only --ignore-scripts --no-audit \
-    && npm ci --only=production
+    && rm -f package-lock.json \
+    && npm install --omit=dev --no-audit --ignore-scripts
 
 # Copy meter-service package and files
 WORKDIR /app
 COPY services/meter-service/package*.json ./services/meter-service/
 WORKDIR /app/services/meter-service
 RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.overrides=Object.assign(p.overrides||{},{'cross-spawn':'7.0.5','glob':'10.5.0','minimatch':'9.0.7'});fs.writeFileSync('package.json',JSON.stringify(p,null,2));" \
-    && npm install --package-lock-only --ignore-scripts --no-audit \
-    && npm ci --only=production
+    && rm -f package-lock.json \
+    && npm install --omit=dev --no-audit --ignore-scripts
 
 # Copy source code
 WORKDIR /app
