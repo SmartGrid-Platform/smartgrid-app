@@ -19,10 +19,12 @@ if (!skipS3) {
   console.log('[S3 Helper] S3 Bucket not configured or SKIP_S3 set. Using local directory fallback.');
 }
 
-// Ensure local storage folder exists for local fallback
+// Only create local storage when S3 is not configured (local dev fallback)
 const billsDir = path.join(__dirname, '../../storage/bills');
-if (!fs.existsSync(billsDir)) {
-  fs.mkdirSync(billsDir, { recursive: true });
+if (skipS3) {
+  if (!fs.existsSync(billsDir)) {
+    fs.mkdirSync(billsDir, { recursive: true });
+  }
 }
 
 async function uploadBill(fileName, htmlContent) {
