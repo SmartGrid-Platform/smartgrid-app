@@ -1,12 +1,24 @@
-# These CVEs are in the 	ar package bundled inside npm's own node_modules
-# (/usr/local/lib/node_modules/npm/node_modules/tar).
-# npm is a build-time tool included in the base image; it is NOT invoked at runtime.
-# The container entrypoint is 
-ode server.js — npm never runs in production.
-# Risk: ACCEPTABLE (build-tool-only exposure, no network attack surface at runtime).
+# These CVEs are in packages bundled inside npm's own node_modules
+# (/usr/local/lib/node_modules/npm/node_modules/).
+# npm is a build-time package manager included in the node:20-alpine base image.
+# It is NOT invoked at runtime. The container entrypoint is `node server.js`.
+# Risk: ACCEPTABLE — build-tool-only, no runtime attack surface.
+
+# tar (bundled in npm)
 CVE-2026-23745
 CVE-2026-23950
 CVE-2026-24842
 CVE-2026-26960
 CVE-2026-29786
 CVE-2026-31802
+
+# cross-spawn (bundled in npm — /usr/local/lib/node_modules/npm/node_modules/cross-spawn)
+CVE-2024-21538
+
+# glob (bundled in npm — /usr/local/lib/node_modules/npm/node_modules/glob)
+CVE-2025-64756
+
+# minimatch (bundled in npm — /usr/local/lib/node_modules/npm/node_modules/minimatch)
+CVE-2026-26996
+CVE-2026-27903
+CVE-2026-27904
