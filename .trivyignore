@@ -22,3 +22,12 @@ CVE-2025-64756
 CVE-2026-26996
 CVE-2026-27903
 CVE-2026-27904
+
+# nodemailer@6.10.1 in alert-service
+# CVE-2025-14874: DoS via crafted email address header — requires attacker to control
+#   email headers passed to sendMail(). Internal alerting only; not user-controlled input.
+# GHSA-p6gq-j5cr-w38f: File read via message raw option — requires caller to explicitly
+#   set { raw: true } on a Message object, which is not used in this codebase.
+# Risk: LOW (internal service, controlled inputs, raw option not used).
+CVE-2025-14874
+GHSA-p6gq-j5cr-w38f
