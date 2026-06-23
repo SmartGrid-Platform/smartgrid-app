@@ -5,13 +5,13 @@ WORKDIR /app
 # Copy shared database package and files
 COPY shared/database/package*.json ./shared/database/
 WORKDIR /app/shared/database
-RUN npm ci --only=production
+RUN npm ci --only=production && npm install cross-spawn@7.0.5 minimatch@9.0.7 glob@10.5.0 --no-save --no-package-lock --no-audit --no-fund
 
 # Copy ai-assistant-service package and files
 WORKDIR /app
 COPY services/ai-assistant-service/package*.json ./services/ai-assistant-service/
 WORKDIR /app/services/ai-assistant-service
-RUN npm ci --only=production
+RUN npm ci --only=production && npm install cross-spawn@7.0.5 minimatch@9.0.7 glob@10.5.0 --no-save --no-package-lock --no-audit --no-fund
 
 # Copy source code
 WORKDIR /app
@@ -25,14 +25,11 @@ WORKDIR /app
 # Upgrade Alpine OS packages (fixes libssl3/libcrypto3 CVE-2026-45447)
 RUN apk upgrade --no-cache libssl3 libcrypto3
 
-# Copy built artifacts from builder
+# Copy built artifacts (includes CVE-patched node_modules from builder)
 COPY --from=builder /app/shared/database ./shared/database
 COPY --from=builder /app/services/ai-assistant-service ./services/ai-assistant-service
 
 WORKDIR /app/services/ai-assistant-service
-
-# Patch CVEs in app transitive deps (cross-spawn CVE-2024-21538, minimatch CVE-2026-27903/27904, glob CVE-2025-64756)
-RUN npm install cross-spawn@7.0.5 minimatch@9.0.7 glob@10.5.0 --no-save --no-audit --no-fund
 
 EXPOSE 4004
 ENV NODE_ENV=production
