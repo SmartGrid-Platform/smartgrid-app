@@ -125,6 +125,10 @@ router.post('/chat', authenticate, async (req, res) => {
       console.warn('[CHAT] Agent timed out after 50s');
       return res.status(504).json({ error: 'The assistant took too long to respond. Please try again.' });
     }
+    if (error.name === 'ThrottlingException') {
+      console.warn('[CHAT] Bedrock quota exhausted for all models');
+      return res.status(429).json({ error: 'The AI service is temporarily unavailable due to high usage. Please try again in a few minutes.' });
+    }
     console.error('[CHAT] AI Chat Error:', error.stack || error);
     return res.status(500).json({ error: 'Failed to process chat message' });
   }
