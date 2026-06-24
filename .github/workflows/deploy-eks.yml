@@ -183,11 +183,10 @@ jobs:
         run: |
           EKS_ALB_DNS="${{ steps.get-alb.outputs.eks_alb_dns }}"
 
-          DIST_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(to_string(Origins), 'ALB-API')].Id" \
-            --output text)
-          if [ -z "$DIST_ID" ]; then
-            echo "ERROR: Could not find CloudFront distribution with ALB-API origin."
+          DIST_ID=$(aws cloudfront list-distributions --output json \
+            | jq -r '.DistributionList.Items[] | select(.DomainName == "'"$CLOUDFRONT_URL"'") | .Id')
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "null" ]; then
+            echo "ERROR: Could not find CloudFront distribution for $CLOUDFRONT_URL"
             exit 1
           fi
 
