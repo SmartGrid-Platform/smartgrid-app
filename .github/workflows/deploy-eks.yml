@@ -31,9 +31,6 @@ jobs:
       cloudfront_url:     ${{ steps.tf.outputs.cloudfront_url }}
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -41,30 +38,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ vars.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.5.7
-          terraform_wrapper: false
-
-      - name: Terraform Init (read-only — accesses remote state)
-        working-directory: ./terraform
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
-            -backend-config="region=${{ vars.AWS_REGION }}" \
-            -backend-config="dynamodb_table=${{ vars.TF_STATE_LOCK_TABLE }}"
-
-      - name: Export Terraform outputs
+      - name: Export Terraform outputs from S3 state
         id: tf
-        working-directory: ./terraform
         run: |
-          echo "cluster_name=$(terraform output -raw cluster_name)"                          >> "$GITHUB_OUTPUT"
-          echo "k8s_namespace=$(terraform output -raw k8s_namespace)"                        >> "$GITHUB_OUTPUT"
-          echo "ecr_registry_url=$(terraform output -raw ecr_registry_url)"                  >> "$GITHUB_OUTPUT"
-          echo "eks_pod_role_arn=$(terraform output -raw eks_pod_role_arn)"                  >> "$GITHUB_OUTPUT"
-          echo "secret_name=$(terraform output -raw secrets_manager_secret_name)"            >> "$GITHUB_OUTPUT"
-          echo "cloudfront_url=$(terraform output -raw cloudfront_url)"                      >> "$GITHUB_OUTPUT"
+          aws s3 cp "s3://${{ vars.TF_STATE_BUCKET }}/smartgrid/terraform.tfstate" /tmp/tfstate.json
+          echo "cluster_name=$(jq -r '.outputs.cluster_name.value'                  /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
+          echo "k8s_namespace=$(jq -r '.outputs.k8s_namespace.value'                /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
+          echo "ecr_registry_url=$(jq -r '.outputs.ecr_registry_url.value'          /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
+          echo "eks_pod_role_arn=$(jq -r '.outputs.eks_pod_role_arn.value'          /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
+          echo "secret_name=$(jq -r '.outputs.secrets_manager_secret_name.value'    /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
+          echo "cloudfront_url=$(jq -r '.outputs.cloudfront_url.value'              /tmp/tfstate.json)" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────────────
   # 1. Security Scanning (non-blocking)
