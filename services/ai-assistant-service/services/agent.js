@@ -36,9 +36,9 @@ When answering, strictly adhere to the following rules:
 10. Support detailed analytical conversations, follow-up questions, and utility operations topics.
 11. UPLOADED BILL ANALYSIS: If the user conversation contains an "[Attached PDF Context]" block, prioritize using that extracted text to answer specific questions about that particular bill, its charges, and summary. Distinguish between their historical system data and the specific uploaded document.`;
 
-const runConverseAgent = async (messages, consumerId, authHeader, user) => {
+const runConverseAgent = async (messages, consumerId, authHeader, user, modelId = null) => {
   const client = bedrockProvider.client;
-  const modelId = bedrockProvider.primaryModel;
+  const activeModelId = modelId || bedrockProvider.primaryModel;
   const config = { consumerId, authHeader };
 
   // Append user context block dynamically to the system prompt
@@ -65,7 +65,7 @@ const runConverseAgent = async (messages, consumerId, authHeader, user) => {
   // 2. Loop to handle model execution and tool calls (limit to 5 rounds)
   for (let round = 0; round < 5; round++) {
     const command = new ConverseCommand({
-      modelId,
+      modelId: activeModelId,
       messages: formattedMessages,
       system: [{ text: dynamicSystemPrompt }],
       toolConfig: { tools: toolsList },
@@ -75,7 +75,7 @@ const runConverseAgent = async (messages, consumerId, authHeader, user) => {
       }
     });
 
-    console.log(`[AGENT] Invoking model ${modelId} (Round ${round + 1})...`);
+    console.log(`[AGENT] Invoking model ${activeModelId} (Round ${round + 1})...`);
     const response = await client.send(command);
     const outputMessage = response.output.message;
     
@@ -140,6 +140,18 @@ const createAgent = () => {
           messages: [...messages, { role: 'assistant', content: reply }]
         };
       } catch (error) {
+        if (error.name === 'ThrottlingException' && bedrockProvider.fallbackModel !== bedrockProvider.primaryModel) {
+          console.warn(`[AGENT] Primary model throttled, retrying with fallback ${bedrockProvider.fallbackModel}`);
+          try {
+            const reply = await runConverseAgent(messages, consumerId, authHeader, user, bedrockProvider.fallbackModel);
+            return {
+              messages: [...messages, { role: 'assistant', content: reply }]
+            };
+          } catch (fallbackError) {
+            console.error('[AGENT] Fallback model also failed:', fallbackError.message);
+            throw fallbackError;
+          }
+        }
         console.error('[AGENT] Fatal agent invocation error:', error);
         throw error;
       }
