@@ -48,7 +48,8 @@ const ConsumerAssistant = () => {
       setMessages((prev) => [...prev, { role: 'assistant', content: res.data.reply }]);
     } catch (error) {
       console.error('Chat error:', error);
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error. Please try again later.' }]);
+      const errMsg = error.response?.data?.error || 'Sorry, I encountered an error. Please try again later.';
+      setMessages((prev) => [...prev, { role: 'assistant', content: errMsg }]);
     } finally {
       setLoading(false);
     }

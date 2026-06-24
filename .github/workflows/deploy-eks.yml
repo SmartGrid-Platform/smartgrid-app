@@ -76,12 +76,63 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
   # ─────────────────────────────────────────────────────────────
-  # 2. Build frontend and upload static files to S3
+  # 2. Build and deploy bill-generator Lambda
+  # ─────────────────────────────────────────────────────────────
+  deploy-lambda:
+    name: Build & Deploy bill-generator Lambda
+    runs-on: ubuntu-latest
+    needs: [read-tf-outputs, security-scans]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION }}
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Lambda dependencies
+        working-directory: lambdas/bill_generator
+        run: npm install --production
+
+      - name: Package Lambda zip
+        run: |
+          mkdir -p lambdas/zips
+          cd lambdas/bill_generator
+          zip -r ../zips/bill_generator.zip .
+
+      - name: Deploy Lambda to AWS
+        run: |
+          LAMBDA_NAME=$(aws lambda list-functions \
+            --region "${{ vars.AWS_REGION }}" \
+            --query "Functions[?starts_with(FunctionName, 'smartgrid-default-bill-generator')].FunctionName | [0]" \
+            --output text)
+          if [ -z "$LAMBDA_NAME" ] || [ "$LAMBDA_NAME" = "None" ]; then
+            echo "ERROR: Could not find bill-generator Lambda function"
+            exit 1
+          fi
+          echo "Deploying to Lambda: $LAMBDA_NAME"
+          aws lambda update-function-code \
+            --function-name "$LAMBDA_NAME" \
+            --zip-file fileb://lambdas/zips/bill_generator.zip \
+            --region "${{ vars.AWS_REGION }}"
+          echo "Lambda $LAMBDA_NAME updated successfully"
+
+  # ─────────────────────────────────────────────────────────────
+  # 3. Build frontend and upload static files to S3
   # ─────────────────────────────────────────────────────────────
   upload-frontend:
     name: Build & Upload Frontend to S3
     runs-on: ubuntu-latest
-    needs: [read-tf-outputs, security-scans]
+    needs: [read-tf-outputs, security-scans, deploy-lambda]
 
     steps:
       - name: Checkout Code

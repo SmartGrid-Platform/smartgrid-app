@@ -27,6 +27,8 @@ router.get('/ready', (req, res) => {
 // Track sessions in memory for simple demonstration (in production use Redis/DB)
 const userSessions = new Map();
 
+const CHAT_TIMEOUT_MS = 50000;
+
 router.post('/chat', authenticate, async (req, res) => {
   console.log('[CHAT] ==========================================');
   console.log('[CHAT] Received incoming chat request');
@@ -80,37 +82,49 @@ router.post('/chat', authenticate, async (req, res) => {
   try {
     console.log(`[CHAT] Initializing AI assistant agent for session ${sId}`);
     const agent = await createAgent();
-    
+
     console.log(`[CHAT] Invoking agent with message history length: ${config.messages.length}`);
-    const result = await agent.invoke({
-      messages: config.messages,
-      consumerId: config.consumerId,
-      authHeader: config.authHeader,
-      user: {
-        id: req.user.id,
-        name: req.user.name,
-        email: req.user.email,
-        role: req.user.role,
-        consumerId: consumerId,
-        consumerNumber: req.user.consumerNumber || null
-      }
-    }, {
-      configurable: {
-        thread_id: sId
-      }
-    });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('CHAT_TIMEOUT')), CHAT_TIMEOUT_MS)
+    );
+
+    const result = await Promise.race([
+      agent.invoke({
+        messages: config.messages,
+        consumerId: config.consumerId,
+        authHeader: config.authHeader,
+        user: {
+          id: req.user.id,
+          name: req.user.name,
+          email: req.user.email,
+          role: req.user.role,
+          consumerId: consumerId,
+          consumerNumber: req.user.consumerNumber || null
+        }
+      }, {
+        configurable: {
+          thread_id: sId
+        }
+      }),
+      timeoutPromise
+    ]);
 
     const aiMessage = result.messages[result.messages.length - 1];
     console.log(`[CHAT] Agent response generated successfully`);
-    
+
     // Save assistant reply to session history
     config.messages.push({ role: 'assistant', content: aiMessage.content });
-    
+
     return res.status(200).json({
       reply: aiMessage.content,
       sessionId: sId
     });
   } catch (error) {
+    if (error.message === 'CHAT_TIMEOUT') {
+      console.warn('[CHAT] Agent timed out after 50s');
+      return res.status(504).json({ error: 'The assistant took too long to respond. Please try again.' });
+    }
     console.error('[CHAT] AI Chat Error:', error.stack || error);
     return res.status(500).json({ error: 'Failed to process chat message' });
   }

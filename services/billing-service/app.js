@@ -418,8 +418,8 @@ app.post('/api/bills/generate', authenticate, authorize(['STAFF', 'ADMIN']), asy
             const PDFDocument = require('pdfkit');
             const fs = require('fs');
             const path = require('path');
-            
-            const billsDir = path.join(__dirname, '../../storage/bills');
+
+            const billsDir = '/tmp/bills';
             if (!fs.existsSync(billsDir)) {
               fs.mkdirSync(billsDir, { recursive: true });
             }
