@@ -1,5 +1,6 @@
 name: CI/CD - Build, Push & Deploy to EKS
 
+# ArgoCD installed 2026-06-25; automated GitOps now active for production namespace.
 # GitOps deployment flow:
 #   1. Per-service CI (main.yml) builds, scans, and pushes images to ECR.
 #   2. main.yml updates imageTag in smartgrid-helm values.yaml and commits.
